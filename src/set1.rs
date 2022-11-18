@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
 // Lewand's order, according to wikipedia, with space added as most common, and '!' used
 // as a stand-in for all non-alphabetic chars
-static LEWAND_ENGLISH_CHAR_FREQUENCY_ORDER: &str = " et*aoinshrdlcumwfgypbvkjxqz";
+static LEWAND_ENGLISH_CHAR_FREQUENCY_ORDER: &str = " etaoinshrdlcumwfgypbvkjxqz*";
 
 fn hex_to_base64(hex_string: String) -> String {
     let bytes = hex::decode(hex_string).expect("invalid hex");
@@ -63,12 +63,18 @@ impl PartialEq for DecryptionAttempt {
 // 0 points are awarded if the relative frequency corresponds with the benchmark, 1 if it's off by one, and so forth.
 fn calculate_confidence_score(plaintext: &Vec<u8>) -> u32 {
     // benchmark_frequencies.get(c) is the relative frequency of char c in the benchmark
-    let benchmark_rel_frequencies = HashMap::new();
-    LEWAND_ENGLISH_CHAR_FREQUENCY_ORDER
+    let mut benchmark_rel_frequencies = HashMap::new();
+    // LEWAND_ENGLISH_CHAR_FREQUENCY_ORDER
+    //     .as_bytes()
+    //     .iter()
+    //     .enumerate()
+    //     .for_each(|(i, c)| benchmark_rel_frequencies.insert(*c, i as i32));
+    for (i, c) in LEWAND_ENGLISH_CHAR_FREQUENCY_ORDER
         .as_bytes()
         .iter()
-        .enumerate()
-        .for_each(|(i, c)| benchmark_rel_frequencies.insert(*c, i));
+        .enumerate() {
+            let _res = benchmark_rel_frequencies.insert(*c, i as i32);
+        }
 
     // normalised numerical frequencies, adding uppercase totals to lowercase ones, and other non-alphabetic chars to '*'
     let mut num_frequencies = HashMap::new();
@@ -79,25 +85,27 @@ fn calculate_confidence_score(plaintext: &Vec<u8>) -> u32 {
             _ => *byte,
         };
         if !num_frequencies.contains_key(&adjusted_char) {
-            num_frequencies.insert(adjusted_char, 0);
+            num_frequencies.insert(adjusted_char, 1);
         } else {
-            num_frequencies.get_mut(&adjusted_char).unwrap() += 1;
+            *num_frequencies.get_mut(&adjusted_char).unwrap() += 1;
         }
     }
+    println!("num_frequencies: {:?}", num_frequencies);
 
     // sort into order of relative frequencies
-    let rel_frequencies = BTreeMap::new();
+    let mut rel_frequencies = BTreeMap::new();
     for character in num_frequencies.keys() {
         let freq = num_frequencies.get(character).unwrap();
         rel_frequencies.insert(*freq, *character);
     }
 
+    println!("{:?}", rel_frequencies); // debugging
     // calculate the score, by subtracting the rel frequency of each char in our sample with that
     // of the same char in the benchmark (absolute difference), then summing the results
     rel_frequencies
         .values()
         .enumerate()
-        .map(|(freq, character)| (benchmark_rel_frequencies.get(character).unwrap() - freq).abs())
+        .map(|(freq, character)| (benchmark_rel_frequencies.get(character).unwrap() - freq as i32).abs() as u32)
         .sum()
 }
 
@@ -112,12 +120,18 @@ fn solve_single_byte_xor_cipher(cipher_text: Vec<u8>) -> Vec<u8> {
     for ascii_char in 0u8..=126 {
         let plaintext = single_char_xor(&cipher_text, ascii_char);
         let confidence_score = calculate_confidence_score(&plaintext);
+
+        // debugging
+        println!("{}", String::from_utf8(plaintext.clone()).unwrap());
+        println!("acii char = {ascii_char}, confidence score = {confidence_score}");
+        println!();
+
         heap.push(DecryptionAttempt {
             plaintext,
             confidence_score,
         });
     }
-    heap.pop().plaintext
+    heap.pop().unwrap().plaintext
 }
 
 #[cfg(test)]
@@ -150,6 +164,6 @@ mod tests {
         )
         .unwrap();
         let solution = solve_single_byte_xor_cipher(input);
-        println!("{}", hex::encode(solution));
+        println!("{}", String::from_utf8(solution).unwrap());
     }
 }
