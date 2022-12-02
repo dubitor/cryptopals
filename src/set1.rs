@@ -1,12 +1,16 @@
-use base64;
-use core::num;
-use hex;
+
+
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BinaryHeap, HashMap};
+use std::collections::{BinaryHeap, HashMap};
+use std::error::Error;
 
 // Lewand's order, according to wikipedia, with space added as most common, and '!' used
 // as a stand-in for all non-alphabetic chars
 static LEWAND_ENGLISH_CHAR_FREQUENCY_ORDER: &str = " etaoinshrdlcumwfgypbvkjxqz*";
+
+type CharFreq = HashMap<u8, u64>;
+type CharPercent = HashMap<u8, f64>;
+type ConfidenceScore = u32;
 
 fn hex_to_base64(hex_string: String) -> String {
     let bytes = hex::decode(hex_string).expect("invalid hex");
@@ -16,7 +20,7 @@ fn hex_to_base64(hex_string: String) -> String {
 // The xor combination of two same-length buffers.
 fn fixed_xor(buf1: &Vec<u8>, buf2: &Vec<u8>) -> Result<Vec<u8>, &'static str> {
     if buf1.len() != buf2.len() {
-        return Err("Cannot xor buffers of differnt lengths");
+        return Err("Cannot xor buffers of different lengths");
     }
     Ok(buf1
         .iter()
@@ -33,7 +37,7 @@ fn single_char_xor(buf: &Vec<u8>, ascii_char: u8) -> Vec<u8> {
 #[derive(Eq)]
 struct DecryptionAttempt {
     plaintext: Vec<u8>,
-    confidence_score: u32, // the lower the score, the higher the confidence
+    confidence_score: ConfidenceScore, // the lower the score, the higher the confidence
 }
 
 impl Ord for DecryptionAttempt {
@@ -54,71 +58,74 @@ impl PartialEq for DecryptionAttempt {
     }
 }
 
-
 // Get confidence score of decryption attempt based on English character frequency analysis
-// First, the numerical frequency of every byte is calculated.
-// The frequencies are normalised, with the totals for lower- and upper-case versions of the same letter combined
-// and the totals for all non-alphabetic characters combined
-// For each character in the letter range, the frequency is combined with a benchmark
-// 0 points are awarded if the relative frequency corresponds with the benchmark, 1 if it's off by one, and so forth.
-fn calculate_confidence_score(plaintext: &Vec<u8>) -> u32 {
-    // benchmark_frequencies.get(c) is the relative frequency of char c in the benchmark
-    let mut benchmark_rel_frequencies = HashMap::new();
-    // LEWAND_ENGLISH_CHAR_FREQUENCY_ORDER
-    //     .as_bytes()
-    //     .iter()
-    //     .enumerate()
-    //     .for_each(|(i, c)| benchmark_rel_frequencies.insert(*c, i as i32));
-    for (i, c) in LEWAND_ENGLISH_CHAR_FREQUENCY_ORDER
-        .as_bytes()
-        .iter()
-        .enumerate() {
-            let _res = benchmark_rel_frequencies.insert(*c, i as i32);
-        }
+// Benchmark is complete works of shakespeare
+// First, the frequency of each character is calculated as the percentage of the total characters
+// Non-alphabetic chars (except space) are treated as alike
+// These percentages are then compared with the benchmark to generate a score
+fn calculate_confidence_score(plaintext: &Vec<u8>, bench_percent_freqs: &CharPercent) -> ConfidenceScore {
 
-    let num_frequencies = get_character_frequencies(&plaintext);
+    let num_frequencies = get_character_frequencies(plaintext);
+    let percent_freqs = percent_freqs_from_num_freqs(num_frequencies, plaintext.len());
 
-    println!("num_frequencies: {:?}", num_frequencies);
-
-    // sort into order of relative frequencies
-    let mut rel_frequencies: Vec<(&u8, &i32)> = num_frequencies.iter().collect();
-    rel_frequencies.sort_by(|a, b| b.1.cmp(a.1));
-
-    println!("{:?}", rel_frequencies); // debugging
-    // calculate the score, by subtracting the rel frequency of each char in our sample with that
-    // of the same char in the benchmark (absolute difference), then summing the results
     let mut score = 0;
-    for (position, entry) in rel_frequencies.iter().enumerate() {
-        let byte = *entry.0;
-        score += (position as i32 - benchmark_rel_frequencies.get(&byte).unwrap()).abs() as u32;
+    // For each character, get the difference of its percentage frequency in benchmark and plaintext
+    for char in bench_percent_freqs.keys() {
+        let diff = (bench_percent_freqs.get(char).unwrap() - percent_freqs.get(char).unwrap()).abs();
+        // Convert it to an int between 0 and 1000 - this enables us to use it as a key later (floats don't implement Eq)
+        let diff = (diff * 10.0) as u32;
+        score += diff;
     }
     score
-    // rel_frequencies
-    //     .values()
-    //     .enumerate()
-    //     .map(|(freq, character)| (benchmark_rel_frequencies.get(character).unwrap() - freq as i32).abs() as u32)
-    //     .sum()
+
 }
 
-// Given ASCII text, return normalised numerical frequencies, adding uppercase totals to lowercase ones, 
+// Given ASCII text, return normalised numerical frequencies, adding uppercase totals to lowercase ones,
 // and other non-alphabetic chars to '*'
-fn get_character_frequencies(text: &Vec<u8>) -> HashMap<u8, u64> {
-    let mut num_frequencies = HashMap::new();
+fn get_character_frequencies(text: &Vec<u8>) -> CharFreq {
+    let mut num_frequencies = initialise_char_freq_map();
     for byte in text.to_ascii_lowercase().iter() {
         let adjusted_char = match *byte {
             b' ' => b' ', // space
             non_alpha if !non_alpha.is_ascii_lowercase() => b'*',
             _ => *byte,
         };
-        if !num_frequencies.contains_key(&adjusted_char) {
-            num_frequencies.insert(adjusted_char, 1);
-        } else {
-            *num_frequencies.get_mut(&adjusted_char).unwrap() += 1;
-        }
+        *num_frequencies.get_mut(&adjusted_char).unwrap() += 1;
     }
     num_frequencies
-
 }
+
+fn initialise_char_freq_map() -> CharFreq {
+    let mut map = CharFreq::new();
+    for char in LEWAND_ENGLISH_CHAR_FREQUENCY_ORDER.as_bytes().iter() {
+        map.insert(*char, 0);
+    }
+    map
+}
+
+fn percent_freqs_from_num_freqs(char_freqs: CharFreq, size: usize) -> CharPercent {
+    char_freqs
+        // Transform into iterator of (char, num) pairs
+        .keys()
+        .map(|char| char_freqs.get_key_value(char).unwrap())
+        // Transfrom each (char, num) pair into a (char, percentage) pair
+        .map(|(char, num)| (*char, (*num as f64 / size as f64) * 100.0))
+        .collect()
+}
+
+fn get_benchmark_percentage_frequencies() -> CharPercent {
+    let benchmark_text = complete_works_shakespeare().unwrap();
+    let size = benchmark_text.len();
+    let char_freqs = get_character_frequencies(&benchmark_text);
+    percent_freqs_from_num_freqs(char_freqs, size)
+}
+
+fn complete_works_shakespeare() -> Result<Vec<u8>, Box<dyn Error>> {
+    let text =
+        reqwest::blocking::get("https://www.gutenberg.org/cache/epub/100/pg100.txt")?.text()?;
+    Ok(text.into_bytes())
+}
+
 // Decode a piece of English cypher text that's been xor'd against a single ASCII char
 fn solve_single_byte_xor_cipher(cipher_text: Vec<u8>) -> Vec<u8> {
     let mut heap = BinaryHeap::new();
@@ -127,14 +134,10 @@ fn solve_single_byte_xor_cipher(cipher_text: Vec<u8>) -> Vec<u8> {
     //      calculate a score of the plaintext version using char frequency
     //      add plaintext version to priority heap using score as key
     // return the version at the top of the heap
+    let benchmark = get_benchmark_percentage_frequencies();
     for ascii_char in 0u8..=126 {
         let plaintext = single_char_xor(&cipher_text, ascii_char);
-        let confidence_score = calculate_confidence_score(&plaintext);
-
-        // debugging
-        println!("{}", String::from_utf8(plaintext.clone()).unwrap());
-        println!("acii char = {ascii_char}, confidence score = {confidence_score}");
-        println!();
+        let confidence_score = calculate_confidence_score(&plaintext, &benchmark);
 
         heap.push(DecryptionAttempt {
             plaintext,
@@ -174,6 +177,8 @@ mod tests {
         )
         .unwrap();
         let solution = solve_single_byte_xor_cipher(input);
-        println!("{}", String::from_utf8(solution).unwrap());
+        let actual = String::from_utf8(solution).unwrap();
+        let expected = "Cooking MC's like a pound of bacon".to_string();
+        assert_eq!(actual, expected);
     }
 }
