@@ -1,5 +1,3 @@
-
-
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
 use std::error::Error;
@@ -63,21 +61,23 @@ impl PartialEq for DecryptionAttempt {
 // First, the frequency of each character is calculated as the percentage of the total characters
 // Non-alphabetic chars (except space) are treated as alike
 // These percentages are then compared with the benchmark to generate a score
-fn calculate_confidence_score(plaintext: &[u8], bench_percent_freqs: &CharPercent) -> ConfidenceScore {
-
+fn calculate_confidence_score(
+    plaintext: &[u8],
+    bench_percent_freqs: &CharPercent,
+) -> ConfidenceScore {
     let num_frequencies = get_character_frequencies(plaintext);
     let percent_freqs = percent_freqs_from_num_freqs(num_frequencies, plaintext.len());
 
     let mut score = 0;
     // For each character, get the difference of its percentage frequency in benchmark and plaintext
     for char in bench_percent_freqs.keys() {
-        let diff = (bench_percent_freqs.get(char).unwrap() - percent_freqs.get(char).unwrap()).abs();
+        let diff =
+            (bench_percent_freqs.get(char).unwrap() - percent_freqs.get(char).unwrap()).abs();
         // Convert it to an int between 0 and 1000 - this enables us to use it as a key later (floats don't implement Eq)
         let diff = (diff * 10.0) as u32;
         score += diff;
     }
     score
-
 }
 
 // Given ASCII text, return normalised numerical frequencies, adding uppercase totals to lowercase ones,
@@ -126,25 +126,49 @@ fn complete_works_shakespeare() -> Result<Vec<u8>, Box<dyn Error>> {
     Ok(text.into_bytes())
 }
 
-// Decode a piece of English cypher text that's been xor'd against a single ASCII char
-fn solve_single_byte_xor_cipher(cipher_text: Vec<u8>) -> Vec<u8> {
-    let mut heap = BinaryHeap::new();
-    // For each ascii character:
-    //      xor it against the cypher text to get a plaintext version
-    //      calculate a score of the plaintext version using char frequency
-    //      add plaintext version to priority heap using score as key
-    // return the version at the top of the heap
-    let benchmark = get_benchmark_percentage_frequencies();
+// For each ascii character:
+//      xor it against the cypher text to get a plaintext version
+//      calculate a score of the plaintext version using char frequency
+//      add plaintext version to priority heap using score as key
+fn add_xor_decrytion_attempts_to_heap(
+    cipher_text: &[u8],
+    benchmark: &CharPercent,
+    heap: &mut BinaryHeap<DecryptionAttempt>,
+) {
     for ascii_char in 0u8..=126 {
-        let plaintext = single_char_xor(&cipher_text, ascii_char);
-        let confidence_score = calculate_confidence_score(&plaintext, &benchmark);
+        let plaintext = single_char_xor(cipher_text, ascii_char);
+        let confidence_score = calculate_confidence_score(&plaintext, benchmark);
 
         heap.push(DecryptionAttempt {
             plaintext,
             confidence_score,
         });
     }
+}
+// Decode a piece of English cypher text that's been xor'd against a single ASCII char
+fn solve_single_byte_xor_cipher(cipher_text: Vec<u8>) -> Vec<u8> {
+    let mut heap: BinaryHeap<DecryptionAttempt> = BinaryHeap::new();
+    let benchmark = get_benchmark_percentage_frequencies();
+    add_xor_decrytion_attempts_to_heap(&cipher_text, &benchmark, &mut heap);
     heap.pop().unwrap().plaintext
+}
+
+// Finds and decodes the line that has been encoded
+fn detect_single_char_xor(lines: Vec<Vec<u8>>) -> Vec<u8> {
+    let benchmark = get_benchmark_percentage_frequencies();
+    // for each line:
+    //      for each letter:
+    //          calculate confidence score and plaintext
+    //      get highest confidence score and plaintext and add to heap
+    // return line with highest confidence score
+    let mut lines_heap = BinaryHeap::new();
+    for line in lines {
+        let mut heap = BinaryHeap::new();
+        add_xor_decrytion_attempts_to_heap(&line, &benchmark, &mut heap);
+        let best = heap.pop().unwrap();
+        lines_heap.push(best);
+    }
+    lines_heap.pop().unwrap().plaintext
 }
 
 #[cfg(test)]
@@ -179,6 +203,22 @@ mod tests {
         let solution = solve_single_byte_xor_cipher(input);
         let actual = String::from_utf8(solution).unwrap();
         let expected = "Cooking MC's like a pound of bacon".to_string();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn detect_single_char_xor_example() {
+        let file = reqwest::blocking::get("https://www.cryptopals.com/static/challenge-data/4.txt")
+            .unwrap()
+            .text()
+            .unwrap();
+        let input = file
+            .lines()
+            .map(|line| hex::decode(line.as_bytes()).unwrap())
+            .collect();
+        let plaintext = detect_single_char_xor(input);
+        let actual = String::from_utf8(plaintext).unwrap();
+        let expected = "Now that the party is jumping\n".to_string();
         assert_eq!(actual, expected);
     }
 }
