@@ -18,7 +18,7 @@ fn hex_to_base64(hex_string: String) -> String {
 }
 
 // The xor combination of two same-length buffers.
-fn fixed_xor(buf1: &Vec<u8>, buf2: &Vec<u8>) -> Result<Vec<u8>, &'static str> {
+fn fixed_xor(buf1: &[u8], buf2: &[u8]) -> Result<Vec<u8>, &'static str> {
     if buf1.len() != buf2.len() {
         return Err("Cannot xor buffers of different lengths");
     }
@@ -30,7 +30,7 @@ fn fixed_xor(buf1: &Vec<u8>, buf2: &Vec<u8>) -> Result<Vec<u8>, &'static str> {
 }
 
 // The xor combination of a buffer with a single character
-fn single_char_xor(buf: &Vec<u8>, ascii_char: u8) -> Vec<u8> {
+fn single_char_xor(buf: &[u8], ascii_char: u8) -> Vec<u8> {
     buf.iter().map(|b| b ^ ascii_char).collect()
 }
 
@@ -63,7 +63,7 @@ impl PartialEq for DecryptionAttempt {
 // First, the frequency of each character is calculated as the percentage of the total characters
 // Non-alphabetic chars (except space) are treated as alike
 // These percentages are then compared with the benchmark to generate a score
-fn calculate_confidence_score(plaintext: &Vec<u8>, bench_percent_freqs: &CharPercent) -> ConfidenceScore {
+fn calculate_confidence_score(plaintext: &[u8], bench_percent_freqs: &CharPercent) -> ConfidenceScore {
 
     let num_frequencies = get_character_frequencies(plaintext);
     let percent_freqs = percent_freqs_from_num_freqs(num_frequencies, plaintext.len());
@@ -82,7 +82,7 @@ fn calculate_confidence_score(plaintext: &Vec<u8>, bench_percent_freqs: &CharPer
 
 // Given ASCII text, return normalised numerical frequencies, adding uppercase totals to lowercase ones,
 // and other non-alphabetic chars to '*'
-fn get_character_frequencies(text: &Vec<u8>) -> CharFreq {
+fn get_character_frequencies(text: &[u8]) -> CharFreq {
     let mut num_frequencies = initialise_char_freq_map();
     for byte in text.to_ascii_lowercase().iter() {
         let adjusted_char = match *byte {
