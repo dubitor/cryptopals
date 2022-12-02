@@ -76,9 +76,35 @@ fn calculate_confidence_score(plaintext: &Vec<u8>) -> u32 {
             let _res = benchmark_rel_frequencies.insert(*c, i as i32);
         }
 
-    // normalised numerical frequencies, adding uppercase totals to lowercase ones, and other non-alphabetic chars to '*'
+    let num_frequencies = get_character_frequencies(&plaintext);
+
+    println!("num_frequencies: {:?}", num_frequencies);
+
+    // sort into order of relative frequencies
+    let mut rel_frequencies: Vec<(&u8, &i32)> = num_frequencies.iter().collect();
+    rel_frequencies.sort_by(|a, b| b.1.cmp(a.1));
+
+    println!("{:?}", rel_frequencies); // debugging
+    // calculate the score, by subtracting the rel frequency of each char in our sample with that
+    // of the same char in the benchmark (absolute difference), then summing the results
+    let mut score = 0;
+    for (position, entry) in rel_frequencies.iter().enumerate() {
+        let byte = *entry.0;
+        score += (position as i32 - benchmark_rel_frequencies.get(&byte).unwrap()).abs() as u32;
+    }
+    score
+    // rel_frequencies
+    //     .values()
+    //     .enumerate()
+    //     .map(|(freq, character)| (benchmark_rel_frequencies.get(character).unwrap() - freq as i32).abs() as u32)
+    //     .sum()
+}
+
+// Given ASCII text, return normalised numerical frequencies, adding uppercase totals to lowercase ones, 
+// and other non-alphabetic chars to '*'
+fn get_character_frequencies(text: &Vec<u8>) -> HashMap<u8, u64> {
     let mut num_frequencies = HashMap::new();
-    for byte in plaintext.to_ascii_lowercase().iter() {
+    for byte in text.to_ascii_lowercase().iter() {
         let adjusted_char = match *byte {
             b' ' => b' ', // space
             non_alpha if !non_alpha.is_ascii_lowercase() => b'*',
@@ -90,25 +116,9 @@ fn calculate_confidence_score(plaintext: &Vec<u8>) -> u32 {
             *num_frequencies.get_mut(&adjusted_char).unwrap() += 1;
         }
     }
-    println!("num_frequencies: {:?}", num_frequencies);
+    num_frequencies
 
-    // sort into order of relative frequencies
-    let mut rel_frequencies = BTreeMap::new();
-    for character in num_frequencies.keys() {
-        let freq = num_frequencies.get(character).unwrap();
-        rel_frequencies.insert(*freq, *character);
-    }
-
-    println!("{:?}", rel_frequencies); // debugging
-    // calculate the score, by subtracting the rel frequency of each char in our sample with that
-    // of the same char in the benchmark (absolute difference), then summing the results
-    rel_frequencies
-        .values()
-        .enumerate()
-        .map(|(freq, character)| (benchmark_rel_frequencies.get(character).unwrap() - freq as i32).abs() as u32)
-        .sum()
 }
-
 // Decode a piece of English cypher text that's been xor'd against a single ASCII char
 fn solve_single_byte_xor_cipher(cipher_text: Vec<u8>) -> Vec<u8> {
     let mut heap = BinaryHeap::new();
