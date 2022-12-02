@@ -171,6 +171,15 @@ fn detect_single_char_xor(lines: Vec<Vec<u8>>) -> Vec<u8> {
     lines_heap.pop().unwrap().plaintext
 }
 
+// Encrypt plaintext with key using repeating-key XOR encryption
+// Byte 1 of plaintext is XOR'd against byte 1 of key, byte 2 against byte 2,
+// byte 3 against byte 3, byte 4 against byte 1...
+fn repeating_key_xor_encryption(plaintext: &[u8], key: &[u8]) -> Vec<u8> {
+    let size = plaintext.len();
+    let encrytion_buf: Vec<u8> = key.iter().cycle().copied().take(size).collect();
+    fixed_xor(plaintext, &encrytion_buf).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +228,18 @@ mod tests {
         let plaintext = detect_single_char_xor(input);
         let actual = String::from_utf8(plaintext).unwrap();
         let expected = "Now that the party is jumping\n".to_string();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn repeating_key_xor_encryption_example() {
+        let input = "Burning 'em, if you ain't quick and nimble
+I go crazy when I hear a cymbal"
+            .as_bytes();
+        let key = "ICE".as_bytes();
+        let ciphertext = repeating_key_xor_encryption(input, key);
+        let actual = hex::encode(String::from_utf8(ciphertext).unwrap());
+        let expected = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
         assert_eq!(actual, expected);
     }
 }
