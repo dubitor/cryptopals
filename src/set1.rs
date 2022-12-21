@@ -16,7 +16,7 @@ fn hex_to_base64(hex_string: String) -> String {
 }
 
 // The xor combination of two same-length buffers.
-fn fixed_xor(buf1: &[u8], buf2: &[u8]) -> Result<Vec<u8>, &'static str> {
+pub fn fixed_xor(buf1: &[u8], buf2: &[u8]) -> Result<Vec<u8>, &'static str> {
     if buf1.len() != buf2.len() {
         return Err("Cannot xor buffers of different lengths");
     }
@@ -28,7 +28,7 @@ fn fixed_xor(buf1: &[u8], buf2: &[u8]) -> Result<Vec<u8>, &'static str> {
 }
 
 // The xor combination of a buffer with a single character
-fn single_char_xor(buf: &[u8], ascii_char: u8) -> Vec<u8> {
+pub fn single_char_xor(buf: &[u8], ascii_char: u8) -> Vec<u8> {
     buf.iter().map(|b| b ^ ascii_char).collect()
 }
 
@@ -120,7 +120,7 @@ fn get_benchmark_percentage_frequencies() -> CharPercent {
     percent_freqs_from_num_freqs(char_freqs, size)
 }
 
-fn complete_works_shakespeare() -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn complete_works_shakespeare() -> Result<Vec<u8>, Box<dyn Error>> {
     let text =
         reqwest::blocking::get("https://www.gutenberg.org/cache/epub/100/pg100.txt")?.text()?;
     Ok(text.into_bytes())
@@ -146,15 +146,14 @@ fn add_xor_decrytion_attempts_to_heap(
     }
 }
 // Decode a piece of English cypher text that's been xor'd against a single ASCII char
-fn solve_single_byte_xor_cipher(cipher_text: Vec<u8>) -> Vec<u8> {
+pub fn solve_single_byte_xor_cipher(cipher_text: &[u8], benchmark: &CharPercent) -> Vec<u8> {
     let mut heap: BinaryHeap<DecryptionAttempt> = BinaryHeap::new();
-    let benchmark = get_benchmark_percentage_frequencies();
-    add_xor_decrytion_attempts_to_heap(&cipher_text, &benchmark, &mut heap);
+    add_xor_decrytion_attempts_to_heap(cipher_text, &benchmark, &mut heap);
     heap.pop().unwrap().plaintext
 }
 
 // Finds and decodes the line that has been encoded
-fn detect_single_char_xor(lines: Vec<Vec<u8>>) -> Vec<u8> {
+pub fn detect_single_char_xor(lines: Vec<Vec<u8>>) -> Vec<u8> {
     let benchmark = get_benchmark_percentage_frequencies();
     // for each line:
     //      for each letter:
@@ -174,10 +173,70 @@ fn detect_single_char_xor(lines: Vec<Vec<u8>>) -> Vec<u8> {
 // Encrypt plaintext with key using repeating-key XOR encryption
 // Byte 1 of plaintext is XOR'd against byte 1 of key, byte 2 against byte 2,
 // byte 3 against byte 3, byte 4 against byte 1...
-fn repeating_key_xor_encryption(plaintext: &[u8], key: &[u8]) -> Vec<u8> {
+pub fn repeating_key_xor_encryption(plaintext: &[u8], key: &[u8]) -> Vec<u8> {
     let size = plaintext.len();
     let encrytion_buf: Vec<u8> = key.iter().cycle().copied().take(size).collect();
     fixed_xor(plaintext, &encrytion_buf).unwrap()
+}
+
+// The number of differing bits
+fn hamming_distance(buf1: &[u8], buf2: &[u8]) -> u32 {
+    buf1.iter()
+        .zip(buf2.iter())
+        // xor to get '1' for each differing bit, then count the '1's
+        .map(|(x, y)| (*x ^ *y).count_ones())
+        .sum()
+}
+
+// e.g transpose_blocks([abc123def], 3) -> [a1db2ec3f]
+fn transpose_blocks(buf: &[u8], block_size: usize) -> Vec<u8> {
+    let mut transposed = Vec::new();
+
+    for i in 0..block_size {
+        buf.iter()
+            .skip(i)
+            .step_by(block_size)
+            .for_each(|b| transposed.push(*b));
+    }
+
+    transposed
+}
+
+pub fn break_repeating_key_xor(cipher_text: &[u8]) -> Vec<u8> {
+    // Calculate the probable keysize
+    let mut probable_keysize = 0;
+    let mut lowest_edit_dist = f64::MAX;
+    let len = cipher_text.len();
+    for keysize in 2..=40 {
+        if len > 3 * keysize { // otherwise we won't be able to split it into 4 and our approach won't work
+            let chunks: Vec<_> = cipher_text.chunks(keysize).take(4).collect();
+            let first_edit_dist = hamming_distance(chunks[0], chunks[1]);
+            // let second_edit_dist = hamming_distance(chunks[2], chunks[3]);
+            let normalised_edit_dist = first_edit_dist as f64/ keysize as f64;
+                // ((first_edit_dist as f64 + second_edit_dist as f64) / 2.0) / keysize as f64;
+            if normalised_edit_dist < lowest_edit_dist {
+                lowest_edit_dist = normalised_edit_dist;
+                probable_keysize = keysize;
+            }
+        }
+    }
+
+    // test
+    probable_keysize = 3;
+    let input = "Burning 'em, if you ain't quick and nimble
+I go crazy when I hear a cymbal";
+    let key = "ICE".as_bytes();
+    let cipher_text = &repeating_key_xor_encryption(input.as_bytes(), key);
+    // Transpose into blocks of bytes that've been xor'd with the same char
+    // Decode the blocks individually then transpose back to get the result
+    let transposed = transpose_blocks(cipher_text, probable_keysize);
+    let benchmark = get_benchmark_percentage_frequencies();
+    let decoded_transposed: Vec<_> = transposed
+        .chunks(probable_keysize)
+        .flat_map(|chunk| solve_single_byte_xor_cipher(chunk, &benchmark))
+        .collect();
+
+    transpose_blocks(&decoded_transposed, probable_keysize)
 }
 
 #[cfg(test)]
@@ -209,7 +268,8 @@ mod tests {
             "1b37373331363f78151b7f2b783431333d78397828372d363c78373e783a393b3736".as_bytes(),
         )
         .unwrap();
-        let solution = solve_single_byte_xor_cipher(input);
+        let benchmark = get_benchmark_percentage_frequencies();
+        let solution = solve_single_byte_xor_cipher(&input, &benchmark);
         let actual = String::from_utf8(solution).unwrap();
         let expected = "Cooking MC's like a pound of bacon".to_string();
         assert_eq!(actual, expected);
@@ -241,5 +301,31 @@ I go crazy when I hear a cymbal"
         let actual = hex::encode(String::from_utf8(ciphertext).unwrap());
         let expected = "0b3637272a2b2e63622c2e69692a23693a2a3c6324202d623d63343c2a26226324272765272a282b2f20430a652e2c652a3124333a653e2b2027630c692b20283165286326302e27282f";
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn test_hamming_distance() {
+        let buf1 = "this is a test".as_bytes();
+        let buf2 = "wokka wokka!!!".as_bytes();
+        assert_eq!(hamming_distance(buf1, buf2), 37);
+    }
+
+    #[test]
+    fn test_transpose_blocks() {
+        let input = "abcdefghi".as_bytes();
+        let expected = "adgbehcfi";
+        let actual = String::from_utf8(transpose_blocks(input, 3)).unwrap();
+        assert_eq!(actual, expected)
+    }
+    
+    #[test]
+    fn repeating_key_xor_decryption_short() {
+        let input = "Burning 'em, if you ain't quick and nimble
+I go crazy when I hear a cymbal";
+        let key = "ICE".as_bytes();
+        let encrypted = repeating_key_xor_encryption(input.as_bytes(), key);
+        let decrypted = break_repeating_key_xor(&encrypted);
+        assert_eq!(String::from_utf8(decrypted).unwrap(), input);
+
     }
 }
